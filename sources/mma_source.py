@@ -30,6 +30,31 @@ def rechercher_combattant(nom: str) -> list[dict]:
 
 
 @st.cache_data(ttl=86400)
+def rechercher_combattant_debug(nom: str) -> dict:
+    """
+    Diagnostic : essaie plusieurs noms de paramètre possibles pour la
+    recherche de combattants et retourne, pour chacun, le statut HTTP,
+    le nombre de résultats et la réponse brute complète.
+    """
+    essais = {}
+    for nom_parametre in ["search", "name", "lastname", "q"]:
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/fighters", headers=_headers(),
+                params={nom_parametre: nom}, timeout=15,
+            )
+            data = resp.json()
+            essais[nom_parametre] = {
+                "status_http": resp.status_code,
+                "nb_resultats": len(data.get("response", [])),
+                "reponse_brute": data,
+            }
+        except Exception as e:
+            essais[nom_parametre] = {"erreur": str(e)}
+    return essais
+
+
+@st.cache_data(ttl=86400)
 def get_combats_du_combattant(fighter_id: int) -> list[dict]:
     """Récupère l'historique complet des combats d'un combattant précis."""
     resp = requests.get(f"{BASE_URL}/fights", headers=_headers(), params={"fighter": fighter_id}, timeout=15)
