@@ -21,60 +21,46 @@ with onglet_ingestion:
         st.error("Aucune clé API trouvée dans .streamlit/secrets.toml")
 
     st.markdown("### Choisir les deux combattants à comparer")
+    st.caption("Tape au moins 3 lettres — les suggestions apparaissent automatiquement en dessous.")
     col1, col2 = st.columns(2)
     nom_a = col1.text_input("Combattant 1", placeholder="ex: Jon Jones")
     nom_b = col2.text_input("Combattant 2", placeholder="ex: Stipe Miocic")
 
-    if st.button("Rechercher"):
-        if not nom_a or not nom_b:
-            st.warning("Renseigne les deux noms.")
-        else:
+    choix_a, choix_b = None, None
+
+    with col1:
+        if len(nom_a.strip()) >= 3:
             try:
-                st.session_state["mma_resultats_a"] = mma_source.rechercher_combattant(nom_a)
-                st.session_state["mma_resultats_b"] = mma_source.rechercher_combattant(nom_b)
-                if not st.session_state["mma_resultats_a"] or not st.session_state["mma_resultats_b"]:
-                    st.warning(
-                        "Aucun résultat pour au moins un des deux noms. Utilise le mode "
-                        "diagnostic ci-dessous pour voir ce que l'API renvoie réellement."
+                resultats_a = mma_source.rechercher_combattant(nom_a.strip())
+                if resultats_a:
+                    choix_a = st.selectbox(
+                        "Suggestions",
+                        resultats_a,
+                        format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
+                        key="select_a",
                     )
+                else:
+                    st.caption("Aucune suggestion trouvée.")
             except Exception as e:
-                st.error(f"Échec de la connexion : {e}")
+                st.caption(f"Erreur de recherche : {e}")
 
-    with st.expander("🔧 Mode diagnostic : voir pourquoi la recherche ne renvoie rien"):
-        st.caption(
-            "Le nom exact du paramètre de recherche n'a pas pu être confirmé à l'avance "
-            "dans la documentation publique. Ce bouton teste plusieurs noms possibles "
-            "(search, name, lastname, q) sur le nom du Combattant 1 et montre la réponse "
-            "brute de chacun, pour identifier lequel fonctionne réellement."
-        )
-        if st.button("Lancer le diagnostic sur Combattant 1"):
-            if not nom_a:
-                st.warning("Renseigne au moins le nom du Combattant 1.")
-            else:
-                essais = mma_source.rechercher_combattant_debug(nom_a)
-                for nom_param, resultat in essais.items():
-                    st.write(f"**Paramètre testé : `{nom_param}`**")
-                    st.json(resultat)
+    with col2:
+        if len(nom_b.strip()) >= 3:
+            try:
+                resultats_b = mma_source.rechercher_combattant(nom_b.strip())
+                if resultats_b:
+                    choix_b = st.selectbox(
+                        "Suggestions",
+                        resultats_b,
+                        format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
+                        key="select_b",
+                    )
+                else:
+                    st.caption("Aucune suggestion trouvée.")
+            except Exception as e:
+                st.caption(f"Erreur de recherche : {e}")
 
-    resultats_a = st.session_state.get("mma_resultats_a", [])
-    resultats_b = st.session_state.get("mma_resultats_b", [])
-
-    if resultats_a and resultats_b:
-        st.markdown("### Confirmer le bon combattant (en cas d'homonymes)")
-        col1, col2 = st.columns(2)
-        choix_a = col1.selectbox(
-            "Combattant 1 trouvé(s)",
-            resultats_a,
-            format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
-            key="select_a",
-        )
-        choix_b = col2.selectbox(
-            "Combattant 2 trouvé(s)",
-            resultats_b,
-            format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
-            key="select_b",
-        )
-
+    if choix_a and choix_b:
         with st.expander("Voir la fiche brute des deux combattants sélectionnés (pour vérifier l'ID)"):
             st.json({"combattant_1": choix_a, "combattant_2": choix_b})
 
@@ -98,6 +84,22 @@ with onglet_ingestion:
                     )
             except Exception as e:
                 st.error(f"Échec de la connexion : {e}")
+
+    with st.expander("🔧 Mode diagnostic : voir pourquoi la recherche ne renvoie rien"):
+        st.caption(
+            "Le nom exact du paramètre de recherche n'a pas pu être confirmé à l'avance "
+            "dans la documentation publique. Ce bouton teste plusieurs noms possibles "
+            "(search, name, lastname, q) sur le nom du Combattant 1 et montre la réponse "
+            "brute de chacun, pour identifier lequel fonctionne réellement."
+        )
+        if st.button("Lancer le diagnostic sur Combattant 1"):
+            if not nom_a:
+                st.warning("Renseigne au moins le nom du Combattant 1.")
+            else:
+                essais = mma_source.rechercher_combattant_debug(nom_a)
+                for nom_param, resultat in essais.items():
+                    st.write(f"**Paramètre testé : `{nom_param}`**")
+                    st.json(resultat)
 
         with st.expander("🔧 Mode diagnostic : tester plusieurs noms de paramètre pour /fights"):
             st.caption(
