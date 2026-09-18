@@ -1,45 +1,79 @@
+"""
+Source unique retenue pour l'hippique : open-pmu-api.
+Seule vraie API structurée disponible gratuitement pour ce sport - pas de
+concurrent direct à recouper (France Galop / LeTROT restent des références
+de vérification ponctuelle, pas des sources intégrées au pipeline).
+
+L'API n'expose les arrivées que JOUR PAR JOUR. Pour permettre une sélection
+année/mois côté interface (plus pertinente qu'une date exacte pour explorer
+les données), get_arrivees_mois boucle sur chaque jour du mois choisi.
+"""
+
+import calendar
+from datetime import date
+
+import requests
 import streamlit as st
 
-from sources import hippique_source
-from core.rating_engine import nouveau_rating, mettre_a_jour_classement, score_affichable
+from core.schema import Event, Participant, Sport
 
-st.set_page_config(page_title="Hippique", page_icon="🐎", layout="wide")
-st.title("🐎 Hippique")
-st.info("Onglet en phase d'exploration — collecte plus lourde que foot/tennis (cf. cadrage projet).")
+BASE_URL = "https://open-pmu-api.vercel.app/api"
 
-onglet_ingestion, onglet_exploration, onglet_sortie = st.tabs(
-    ["1. Ingestion", "2. Exploration", "3. Sortie exploitable"]
-)
 
-with onglet_ingestion:
-    st.subheader("Statut de connexion à la source")
-    st.write("Source unique : **open-pmu-api** (résultats officiels PMU)")
-    date = st.text_input("Date (MM/DD/YYYY)", value="08/18/2026")
-    if st.button("Tester la récupération des arrivées"):
+@st.cache_data(ttl=86400)
+def get_arrivees(jour: str) -> list[dict]:
+    """
+    jour au format MM/DD/YYYY (format attendu par l'API).
+    Retourne la liste brute des courses de ce jour précis.
+    """
+    resp = requests.get(f"{BASE_URL}/arrivees", params={"date": jour}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("message", [])
+
+
+def get_arrivees_mois(annee: int, mois: int) -> list[dict]:
+    """
+    Agrège les arrivées de TOUS les jours d'un mois donné, en enchaînant les
+    appels quotidiens (contrainte technique de l'API, invisible pour l'utilisateur
+    qui ne choisit qu'une année et un mois côté interface).
+    Chaque jour est mis en cache individuellement (get_arrivees), donc relancer
+    la même période ne recoûte rien en requêtes.
+    """
+    nb_jours = calendar.monthrange(annee, mois)[1]
+    toutes_courses = []
+    for jour in range(1, nb_jours + 1):
+        jour_str = date(annee, mois, jour).strftime("%m/%d/%Y")
         try:
-            courses = hippique_source.get_arrivees(date)
-            st.success(f"{len(courses)} course(s) récupérée(s)")
-            st.session_state["hippique_courses"] = courses
-        except Exception as e:
-            st.error(f"Échec de la connexion : {e}")
+            courses = get_arrivees(jour_str)
+            toutes_courses.extend(courses)
+        except Exception:
+            continue  # jour sans course ou erreur ponctuelle, on continue le mois
+    return toutes_courses
 
-with onglet_exploration:
-    st.subheader("Ce que la donnée permet de calculer")
-    courses = st.session_state.get("hippique_courses", [])
-    if not courses:
-        st.info("Récupère d'abord des courses dans l'onglet Ingestion.")
-    else:
-        for c in courses:
-            st.markdown(f"**{c.get('prix')}** — {c.get('lieu')} ({c.get('partants')} partants)")
-        st.caption(
-            "Features spécifiques exploitables ici : musique (forme codée), "
-            "corde, jockey/entraîneur. Nécessite un travail de parsing dédié."
+
+def vers_schema_commun(course_brute: dict) -> Event:
+    """Convertit une course brute open-pmu-api vers le schéma Event commun (n participants)."""
+    participants = []
+    for numero, details in course_brute.get("arrivee_details", {}).items():
+        participants.append(
+            Participant(
+                id=str(numero),
+                name=details["nom_cheval"],
+                sport=Sport.HIPPIQUE,
+                meta={
+                    "musique": details.get("musique"),
+                    "corde": details.get("corde"),
+                    "jockey": details.get("nom_jockey"),
+                },
+            )
         )
-
-with onglet_sortie:
-    st.subheader("Rating à n participants (démonstration)")
-    st.caption("Cas d'usage clé du moteur mutualisé TrueSkill : classement, pas un simple duel.")
-    ratings_exemple = [nouveau_rating() for _ in range(5)]
-    nouveaux = mettre_a_jour_classement(ratings_exemple)
-    for i, r in enumerate(nouveaux, start=1):
-        st.write(f"Position simulée {i} → score affichable : {score_affichable(r):.1f}")
+    return Event(
+        id=f"{course_brute.get('lieu')}_{course_brute.get('r/c', '')}",
+        sport=Sport.HIPPIQUE,
+        date=course_brute.get("date_evenement") or "",
+        participants=participants,
+        competition=course_brute.get("prix"),
+        meta={"hippodrome": course_brute.get("lieu"), "discipline": course_brute.get("type")},
+        brut=course_brute,  # réponse API complète conservée, rien n'est filtré
+    )
