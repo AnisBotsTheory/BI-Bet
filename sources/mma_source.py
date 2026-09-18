@@ -1,44 +1,69 @@
 """
-Source unique retenue pour le MMA : Ultimate UFC Dataset (Kaggle, mdabbert).
-Ce dataset a déjà fusionné ufcstats.com + cotes + classements dans un seul
-schéma - pas besoin de recouper plusieurs datasets Kaggle entre eux.
+Source unique retenue pour le MMA : API-Sports MMA API (v1.mma.api-sports.io).
+Remplace le dataset Kaggle initialement prévu, qui n'était plus mis à jour
+depuis fin 2024. Même famille que football_api.py : même compte, même
+mécanisme d'authentification (x-apisports-key), même plan gratuit
+(100 requêtes/jour).
 
-A télécharger manuellement une première fois (compte Kaggle requis) :
-https://www.kaggle.com/datasets/mdabbert/ultimate-ufc-dataset
-puis placer le CSV dans data/cache/ufc_dataset.csv
+Clé API : la même que pour le football, déjà dans .streamlit/secrets.toml
+sous [football] api_key = "...". API-Sports utilise une seule clé pour
+toute la famille de produits (football, MMA, basket, etc.).
 """
 
-import pandas as pd
+import requests
 import streamlit as st
-from pathlib import Path
 from datetime import datetime
 
 from core.schema import Event, Participant, Sport
 
-CHEMIN_LOCAL = Path("data/cache/ufc_dataset.csv")
+BASE_URL = "https://v1.mma.api-sports.io"
 
 
-@st.cache_data(ttl=None)  # dataset statique, mis à jour manuellement (pas de temps réel voulu)
-def charger_dataset() -> pd.DataFrame:
-    if not CHEMIN_LOCAL.exists():
-        raise FileNotFoundError(
-            "Dataset MMA introuvable. Télécharge-le depuis Kaggle "
-            "(mdabbert/ultimate-ufc-dataset) et place-le dans data/cache/ufc_dataset.csv"
-        )
-    return pd.read_csv(CHEMIN_LOCAL)
+def _headers() -> dict:
+    return {"x-apisports-key": st.secrets["football"]["api_key"]}
 
 
-def vers_schema_commun(ligne: pd.Series) -> Event:
-    """Convertit une ligne du dataset vers le schéma Event commun."""
+@st.cache_data(ttl=86400)  # 1x/jour, cohérent avec le choix "différé"
+def get_fights(date: str) -> list[dict]:
+    """
+    date au format YYYY-MM-DD.
+    Retourne la liste brute des combats à cette date.
+    """
+    resp = requests.get(
+        f"{BASE_URL}/fights",
+        headers=_headers(),
+        params={"date": date},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json().get("response", [])
+
+
+@st.cache_data(ttl=86400)
+def get_odds(fight_id: int) -> list[dict]:
+    """Récupère les cotes brutes pour un combat donné."""
+    resp = requests.get(
+        f"{BASE_URL}/odds",
+        headers=_headers(),
+        params={"fight": fight_id},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json().get("response", [])
+
+
+def vers_schema_commun(fight_brut: dict) -> Event:
+    """Convertit un combat brut API-Sports MMA vers le schéma Event commun."""
+    fighters = fight_brut["fighters"]
     participants = [
-        Participant(id=ligne["RedFighter"], name=ligne["RedFighter"], sport=Sport.MMA),
-        Participant(id=ligne["BlueFighter"], name=ligne["BlueFighter"], sport=Sport.MMA),
+        Participant(id=str(fighters["first"]["id"]), name=fighters["first"]["name"], sport=Sport.MMA),
+        Participant(id=str(fighters["second"]["id"]), name=fighters["second"]["name"], sport=Sport.MMA),
     ]
     return Event(
-        id=f"{ligne['Date']}_{ligne['RedFighter']}_{ligne['BlueFighter']}",
+        id=str(fight_brut["fight"]["id"]),
         sport=Sport.MMA,
-        date=pd.to_datetime(ligne["Date"]).to_pydatetime(),
+        date=datetime.fromisoformat(fight_brut["fight"]["date"]),
         participants=participants,
-        competition=ligne.get("WeightClass"),
-        meta={"methode": ligne.get("Finish")},
+        competition=fight_brut.get("category"),
+        meta={"organisation": fight_brut.get("organisation", {}).get("name")},
     )
