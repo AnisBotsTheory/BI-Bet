@@ -10,13 +10,25 @@ import requests
 import streamlit as st
 from datetime import datetime
 
-from core.schema import Event, Participant, OddsSnapshot, Sport
+from core.schema import Event, Participant, Sport
 
 BASE_URL = "https://v3.football.api-sports.io"
 
 
 def _headers() -> dict:
     return {"x-apisports-key": st.secrets["football"]["api_key"]}
+
+
+@st.cache_data(ttl=86400)  # les ligues changent rarement, cache 1 jour
+def get_leagues() -> list[dict]:
+    """
+    Récupère la liste complète des ligues disponibles (nom, pays, id).
+    Sert à peupler le menu déroulant de sélection dans l'interface,
+    plutôt que de demander à l'utilisateur de connaître l'ID numérique.
+    """
+    resp = requests.get(f"{BASE_URL}/leagues", headers=_headers(), timeout=15)
+    resp.raise_for_status()
+    return resp.json().get("response", [])
 
 
 @st.cache_data(ttl=3600)  # rafraîchi 1x/heure, cohérent avec le choix "différé, pas temps réel"
@@ -30,6 +42,14 @@ def get_fixtures(league_id: int, season: int) -> list[dict]:
     )
     resp.raise_for_status()
     return resp.json().get("response", [])
+
+
+def get_fixtures_multi_saisons(league_id: int, saisons: list[int]) -> list[dict]:
+    """Concatène les fixtures de plusieurs saisons pour une même ligue."""
+    toutes_fixtures = []
+    for saison in saisons:
+        toutes_fixtures.extend(get_fixtures(league_id, saison))
+    return toutes_fixtures
 
 
 @st.cache_data(ttl=3600)
@@ -59,4 +79,5 @@ def vers_schema_commun(fixture_brut: dict) -> Event:
         participants=participants,
         competition=fixture_brut["league"]["name"],
         meta={"venue": fixture_brut["fixture"].get("venue", {}).get("name")},
+        brut=fixture_brut,  # réponse API complète conservée, rien n'est filtré
     )
