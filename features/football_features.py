@@ -9,7 +9,7 @@ l'historique déjà en mémoire.
 from collections import defaultdict
 import pandas as pd
 
-from core.rating_engine import nouveau_rating, mettre_a_jour_duel, score_affichable
+from core.rating_engine import nouveau_rating, mettre_a_jour_duel, score_affichable, probabilite_victoire_duel
 
 
 def construire_ratings(fixtures_brutes: list[dict]) -> dict[str, "trueskill.Rating"]:
@@ -86,6 +86,57 @@ def confrontations_directes(fixtures_brutes: list[dict], team_a_id: str, team_b_
         "score": f"{f['goals']['home']} - {f['goals']['away']}",
     } for f in matchs]
     return pd.DataFrame(lignes)
+
+
+def backtest_modele(fixtures_brutes: list[dict]) -> dict:
+    """
+    Mesure la fiabilité réelle du modèle sur l'historique déjà chargé.
+    Principe : pour chaque match, on calcule la probabilité AVANT de
+    connaître le résultat (avec les ratings tels qu'ils étaient à ce
+    moment-là), puis on met à jour les ratings - jamais l'inverse. Ça
+    évite le biais classique de "prédire" avec des infos qui ne seraient
+    connues qu'après coup.
+    """
+    fixtures_terminees = [
+        f for f in fixtures_brutes
+        if f["fixture"]["status"]["short"] == "FT" and f["goals"]["home"] is not None
+    ]
+    fixtures_triees = sorted(fixtures_terminees, key=lambda f: f["fixture"]["date"])
+
+    ratings: dict[str, "trueskill.Rating"] = {}
+    bonnes_predictions, matchs_evalues = 0, 0
+
+    def rating_de(team_id: str):
+        if team_id not in ratings:
+            ratings[team_id] = nouveau_rating()
+        return ratings[team_id]
+
+    for f in fixtures_triees:
+        home_id, away_id = str(f["teams"]["home"]["id"]), str(f["teams"]["away"]["id"])
+        buts_home, buts_away = f["goals"]["home"], f["goals"]["away"]
+        r_home, r_away = rating_de(home_id), rating_de(away_id)
+
+        # on ne juge le modèle que sur les matchs où les deux équipes ont déjà
+        # un minimum d'historique (sinon la prédiction est arbitraire, 50/50)
+        deja_vues = home_id in ratings and away_id in ratings
+        if deja_vues and buts_home != buts_away:  # on exclut les nuls, non modélisés par le rating
+            proba_home = probabilite_victoire_duel(r_home, r_away)
+            favori_predit = home_id if proba_home >= 0.5 else away_id
+            gagnant_reel = home_id if buts_home > buts_away else away_id
+            matchs_evalues += 1
+            if favori_predit == gagnant_reel:
+                bonnes_predictions += 1
+
+        if buts_home > buts_away:
+            ratings[home_id], ratings[away_id] = mettre_a_jour_duel(r_home, r_away)
+        elif buts_away > buts_home:
+            ratings[away_id], ratings[home_id] = mettre_a_jour_duel(r_away, r_home)
+
+    return {
+        "matchs_evalues": matchs_evalues,
+        "bonnes_predictions": bonnes_predictions,
+        "precision": round(100 * bonnes_predictions / matchs_evalues, 1) if matchs_evalues else None,
+    }
 
 
 def stats_arbitres(fixtures_brutes: list[dict]) -> pd.DataFrame:
