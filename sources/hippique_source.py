@@ -52,6 +52,18 @@ def get_arrivees_mois(annee: int, mois: int) -> list[dict]:
     return toutes_courses
 
 
+def get_arrivees_debug(jour: str) -> dict:
+    """
+    Retourne la réponse brute complète d'un jour précis, sans aucun
+    traitement - sert à vérifier si arrivee_details (noms de chevaux,
+    jockeys, cotes) est bien présent pour les dates testées, ou si
+    seules les infos générales de course sont disponibles ce jour-là.
+    """
+    resp = requests.get(f"{BASE_URL}/arrivees", params={"date": jour}, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def vers_schema_commun(course_brute: dict) -> Event:
     """Convertit une course brute open-pmu-api vers le schéma Event commun (n participants)."""
     participants = []
