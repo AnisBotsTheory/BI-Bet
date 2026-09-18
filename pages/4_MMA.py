@@ -101,6 +101,19 @@ with onglet_ingestion:
                     st.write(f"**Paramètre testé : `{nom_param}`**")
                     st.json(resultat)
 
+    with st.expander("🔧 Mode diagnostic : voir pourquoi l'historique de combats est vide"):
+        st.caption(
+            "Recherche confirmée fonctionnelle (paramètre 'search'). Ce diagnostic teste "
+            "maintenant plusieurs noms de paramètre pour /fights (fighter, id, fighter_id) "
+            "sur l'ID du combattant sélectionné."
+        )
+        id_test = st.number_input("ID du combattant à tester", value=choix_a["id"] if choix_a else 214)
+        if st.button("Lancer le diagnostic sur /fights"):
+            essais = mma_source.get_combats_du_combattant_debug(id_test)
+            for nom_param, resultat in essais.items():
+                st.write(f"**Paramètre testé : `{nom_param}`**")
+                st.json(resultat)
+
         with st.expander("🔧 Mode diagnostic : tester plusieurs noms de paramètre pour /fights"):
             st.caption(
                 "La documentation publique du paramètre exact de l'endpoint /fights n'a pas pu "
