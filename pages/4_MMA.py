@@ -25,32 +25,70 @@ with onglet_ingestion:
     nom_a = col1.text_input("Combattant 1", placeholder="ex: Jon Jones")
     nom_b = col2.text_input("Combattant 2", placeholder="ex: Stipe Miocic")
 
-    if st.button("Rechercher et comparer"):
+    if st.button("Rechercher"):
         if not nom_a or not nom_b:
             st.warning("Renseigne les deux noms.")
         else:
             try:
-                resultats_a = mma_source.rechercher_combattant(nom_a)
-                resultats_b = mma_source.rechercher_combattant(nom_b)
-                if not resultats_a or not resultats_b:
-                    st.error("Un des deux combattants n'a pas été trouvé — vérifie l'orthographe.")
-                else:
-                    fighter_a = resultats_a[0]  # si plusieurs homonymes, on prend le premier résultat
-                    fighter_b = resultats_b[0]
-                    combats_a = mma_source.get_combats_du_combattant(fighter_a["id"])
-                    combats_b = mma_source.get_combats_du_combattant(fighter_b["id"])
-                    # fusion en évitant les doublons (un combat commun apparaît dans les deux historiques)
-                    combats_fusion = {c["fight"]["id"]: c for c in combats_a + combats_b}.values()
+                st.session_state["mma_resultats_a"] = mma_source.rechercher_combattant(nom_a)
+                st.session_state["mma_resultats_b"] = mma_source.rechercher_combattant(nom_b)
+            except Exception as e:
+                st.error(f"Échec de la connexion : {e}")
 
-                    st.session_state["mma_combattant_a"] = fighter_a
-                    st.session_state["mma_combattant_b"] = fighter_b
-                    st.session_state["mma_combats"] = list(combats_fusion)
-                    st.success(
-                        f"{fighter_a['name']} ({len(combats_a)} combats) vs "
-                        f"{fighter_b['name']} ({len(combats_b)} combats) — {len(combats_fusion)} combats uniques au total"
+    resultats_a = st.session_state.get("mma_resultats_a", [])
+    resultats_b = st.session_state.get("mma_resultats_b", [])
+
+    if resultats_a and resultats_b:
+        st.markdown("### Confirmer le bon combattant (en cas d'homonymes)")
+        col1, col2 = st.columns(2)
+        choix_a = col1.selectbox(
+            "Combattant 1 trouvé(s)",
+            resultats_a,
+            format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
+            key="select_a",
+        )
+        choix_b = col2.selectbox(
+            "Combattant 2 trouvé(s)",
+            resultats_b,
+            format_func=lambda f: f"{f.get('name')} — id {f.get('id')}" + (f" — {f.get('nickname')}" if f.get('nickname') else ""),
+            key="select_b",
+        )
+
+        with st.expander("Voir la fiche brute des deux combattants sélectionnés (pour vérifier l'ID)"):
+            st.json({"combattant_1": choix_a, "combattant_2": choix_b})
+
+        if st.button("Charger l'historique de ces deux combattants"):
+            try:
+                combats_a = mma_source.get_combats_du_combattant(choix_a["id"])
+                combats_b = mma_source.get_combats_du_combattant(choix_b["id"])
+                combats_fusion = {c["fight"]["id"]: c for c in combats_a + combats_b}.values()
+
+                st.session_state["mma_combattant_a"] = choix_a
+                st.session_state["mma_combattant_b"] = choix_b
+                st.session_state["mma_combats"] = list(combats_fusion)
+                st.success(
+                    f"{choix_a['name']} ({len(combats_a)} combats) vs "
+                    f"{choix_b['name']} ({len(combats_b)} combats) — {len(combats_fusion)} combats uniques au total"
+                )
+                if len(combats_a) == 0 or len(combats_b) == 0:
+                    st.warning(
+                        "Un des deux combattants ressort avec 0 combat — c'est suspect si c'est "
+                        "un combattant connu. Utilise le mode diagnostic ci-dessous pour comprendre pourquoi."
                     )
             except Exception as e:
                 st.error(f"Échec de la connexion : {e}")
+
+        with st.expander("🔧 Mode diagnostic : tester plusieurs noms de paramètre pour /fights"):
+            st.caption(
+                "La documentation publique du paramètre exact de l'endpoint /fights n'a pas pu "
+                "être confirmée à l'avance. Ce bouton teste plusieurs noms possibles et montre "
+                "la réponse brute de chacun, pour identifier lequel fonctionne réellement."
+            )
+            if st.button("Lancer le diagnostic sur Combattant 1"):
+                essais = mma_source.get_combats_du_combattant_debug(choix_a["id"])
+                for nom_param, resultat in essais.items():
+                    st.write(f"**Paramètre testé : `{nom_param}`**")
+                    st.json(resultat)
 
 with onglet_exploration:
     st.subheader("Ce que la donnée permet de calculer")
