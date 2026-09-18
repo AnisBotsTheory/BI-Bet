@@ -3,8 +3,8 @@ import pandas as pd
 
 from sources import football_api
 from features import football_features as ff
-from core.rating_engine import score_affichable, probabilite_victoire_duel
-from core.probability import normaliser_marche, ecart_modele_vs_marche
+from core.rating_engine import probabilite_victoire_duel
+from core.probability import normaliser_marche
 
 st.set_page_config(page_title="Football", page_icon="⚽", layout="wide")
 st.title("⚽ Football")
@@ -24,7 +24,6 @@ with onglet_ingestion:
             "[football]\napi_key = \"ta_cle\""
         )
 
-    # --- Sélection en 2 temps : pays puis ligue, pour éviter une liste trop longue ---
     try:
         leagues = football_api.get_leagues()
         pays_disponibles = sorted({l["country"]["name"] for l in leagues if l["country"]["name"]})
@@ -67,29 +66,13 @@ with onglet_exploration:
         st.write(f"{len(fixtures)} événements chargés")
         st.dataframe(events_apercu)
 
-        st.markdown("### Forme récente par équipe")
-        equipes = sorted({f["teams"]["home"]["name"]: str(f["teams"]["home"]["id"]) for f in fixtures}.items()
-                          | {f["teams"]["away"]["name"]: str(f["teams"]["away"]["id"]) for f in fixtures}.items())
-        lignes_forme = []
-        for nom, tid in dict(equipes).items():
-            forme = ff.forme_recente(fixtures, tid)
-            lignes_forme.append({"équipe": nom, **forme})
-        st.dataframe(pd.DataFrame(lignes_forme).sort_values("points_par_match", ascending=False))
-
-        st.markdown("### Statistiques par arbitre")
-        df_arbitres = ff.stats_arbitres(fixtures)
-        if df_arbitres.empty:
-            st.caption("Pas assez de matchs par arbitre pour être significatif (seuil : 3 matchs minimum).")
-        else:
-            st.dataframe(df_arbitres)
-
         with st.expander("Voir toutes les données brutes renvoyées par l'API (tous les champs)"):
             df_brut = pd.json_normalize(fixtures)
             st.write(f"{df_brut.shape[1]} colonnes disponibles au total")
             st.dataframe(df_brut)
 
 with onglet_sortie:
-    st.subheader("Analyse d'un match : 3 avis confrontés")
+    st.subheader("Analyse d'un match : 3 avis confrontés, expliqués")
     fixtures = st.session_state.get("football_fixtures", [])
     if not fixtures:
         st.info("Récupère d'abord des matchs dans l'onglet Ingestion pour analyser un match précis.")
@@ -103,22 +86,36 @@ with onglet_sortie:
         choix = st.selectbox("Choisir un match à analyser", list(options_matchs.keys()))
         match = options_matchs[choix]
 
-        home_id = str(match["teams"]["home"]["id"])
-        away_id = str(match["teams"]["away"]["id"])
+        home_id, away_id = str(match["teams"]["home"]["id"]), str(match["teams"]["away"]["id"])
+        home_nom, away_nom = match["teams"]["home"]["name"], match["teams"]["away"]["name"]
         fixture_id = match["fixture"]["id"]
+        arbitre_match = match["fixture"].get("referee")
+
+        forme_home = ff.forme_recente(fixtures, home_id)
+        forme_away = ff.forme_recente(fixtures, away_id)
+        df_h2h = ff.confrontations_directes(fixtures, home_id, away_id)
 
         col1, col2, col3 = st.columns(3)
 
-        # --- 1. Notre rating TrueSkill ---
+        # --- 1. Notre rating TrueSkill, avec justification ---
         with col1:
             st.markdown("**Notre modèle (TrueSkill)**")
             if home_id in ratings and away_id in ratings:
                 proba_home = probabilite_victoire_duel(ratings[home_id], ratings[away_id])
-                st.metric(f"{match['teams']['home']['name']} gagne", f"{proba_home:.1%}")
+                st.metric(f"{home_nom} gagne", f"{proba_home:.1%}")
+                raison = (
+                    f"{home_nom} : {forme_home['points']} pts sur ses {forme_home['matchs_joues']} derniers "
+                    f"matchs ({forme_home['points_par_match']} pts/match). "
+                    f"{away_nom} : {forme_away['points']} pts sur {forme_away['matchs_joues']} "
+                    f"({forme_away['points_par_match']} pts/match)."
+                )
+                if not df_h2h.empty:
+                    raison += f" Historique direct : {len(df_h2h)} confrontation(s) déjà connue(s) (voir plus bas)."
+                st.caption(f"📊 Pourquoi : {raison}")
             else:
                 st.caption("Pas assez d'historique pour ces équipes.")
 
-        # --- 2. Pronostic natif API-Football (indépendant des cotes) ---
+        # --- 2. Pronostic natif API-Football, avec ses propres explications ---
         with col2:
             st.markdown("**Pronostic API-Football**")
             try:
@@ -128,12 +125,27 @@ with onglet_sortie:
                     comment = pred.get("predictions", {}).get("winner", {}).get("comment", "")
                     st.metric("Favori algorithmique", winner)
                     st.caption(comment)
+
+                    conseil = pred.get("predictions", {}).get("advice")
+                    if conseil:
+                        st.caption(f"💡 Conseil de l'algorithme : {conseil}")
+
+                    comparaison = pred.get("comparison", {})
+                    if comparaison:
+                        st.caption("📊 Pourquoi (comparaison interne à l'API) :")
+                        lignes_comp = {
+                            critere: [valeurs.get("home"), valeurs.get("away")]
+                            for critere, valeurs in comparaison.items()
+                        }
+                        st.dataframe(
+                            pd.DataFrame(lignes_comp, index=[home_nom, away_nom]).T
+                        )
                 else:
                     st.caption("Aucun pronostic disponible pour ce match.")
             except Exception as e:
                 st.caption(f"Indisponible : {e}")
 
-        # --- 3. Probabilité implicite du marché (cotes) ---
+        # --- 3. Probabilité implicite du marché, avec explication de ce qu'elle représente ---
         with col3:
             st.markdown("**Marché (cotes)**")
             try:
@@ -141,16 +153,60 @@ with onglet_sortie:
                 cotes = football_api.extraire_cotes_1x2(odds_bruts)
                 if cotes:
                     probas_marche = normaliser_marche([cotes["home"], cotes["draw"], cotes["away"]])
-                    st.metric(f"{match['teams']['home']['name']} gagne", f"{probas_marche[0]:.1%}")
+                    st.metric(f"{home_nom} gagne", f"{probas_marche[0]:.1%}")
                     st.caption(f"Cote moyenne : {cotes['home']:.2f}")
+                    st.caption(
+                        "📊 Pourquoi : cette probabilité vient de la moyenne des cotes de "
+                        "plusieurs bookmakers. Elle intègre potentiellement des informations "
+                        "non publiques (blessures, mise en forme interne) — à traiter comme "
+                        "un signal de référence, pas une vérité absolue."
+                    )
                 else:
                     st.caption("Pas de cotes disponibles pour ce match (fréquent sur divisions amateurs ou matchs anciens).")
             except Exception as e:
                 st.caption(f"Indisponible : {e}")
 
+        st.divider()
+
+        col_forme, col_arbitre = st.columns(2)
+        with col_forme:
+            st.markdown("### Forme récente des deux équipes")
+            st.dataframe(pd.DataFrame([
+                {"équipe": home_nom, **forme_home},
+                {"équipe": away_nom, **forme_away},
+            ]))
+        with col_arbitre:
+            st.markdown("### Statistiques de l'arbitre de ce match")
+            if arbitre_match:
+                df_arbitres = ff.stats_arbitres(fixtures)
+                ligne_arbitre = df_arbitres[df_arbitres["arbitre"] == arbitre_match]
+                if not ligne_arbitre.empty:
+                    st.dataframe(ligne_arbitre)
+                else:
+                    st.caption(f"{arbitre_match} : pas assez de matchs dans l'historique chargé (seuil : 3 minimum).")
+            else:
+                st.caption("Arbitre non renseigné pour ce match.")
+
         st.markdown("### Historique des confrontations directes")
-        df_h2h = ff.confrontations_directes(fixtures, home_id, away_id)
         if df_h2h.empty:
             st.caption("Aucune confrontation directe dans les données déjà chargées.")
         else:
             st.dataframe(df_h2h)
+
+        st.divider()
+        st.markdown("### 🎯 Fiabilité mesurée du modèle sur cette ligue (backtesting)")
+        bt = ff.backtest_modele(fixtures)
+        if bt["matchs_evalues"]:
+            st.metric(
+                "Précision historique (hors nuls, hors 1ers matchs de chaque équipe)",
+                f"{bt['precision']}%",
+                help="Le favori du modèle a été calculé AVANT chaque match, jamais après coup.",
+            )
+            st.caption(
+                f"Sur {bt['matchs_evalues']} matchs déjà rejoués dans les données chargées, "
+                f"le modèle a correctement identifié le vainqueur {bt['bonnes_predictions']} fois. "
+                "Cette mesure sert à juger la confiance à accorder au modèle sur cette ligue précise, "
+                "pas à garantir un résultat futur."
+            )
+        else:
+            st.caption("Pas assez de matchs terminés dans l'historique chargé pour mesurer une précision.")
