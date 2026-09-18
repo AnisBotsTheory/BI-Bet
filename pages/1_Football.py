@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 from sources import football_api
 from core.rating_engine import nouveau_rating, probabilite_victoire_duel
@@ -22,15 +23,36 @@ with onglet_ingestion:
             "[football]\napi_key = \"ta_cle\""
         )
 
-    league_id = st.number_input("ID de la ligue (ex: 61 = Ligue 1)", value=61)
-    season = st.number_input("Saison", value=2025)
+    # --- Sélection de la ligue via une liste déroulante plutôt qu'un ID numérique ---
+    try:
+        leagues = football_api.get_leagues()
+        options_ligues = {
+            f"{l['league']['name']} ({l['country']['name']})": l["league"]["id"]
+            for l in leagues
+        }
+        nom_ligue = st.selectbox("Ligue", sorted(options_ligues.keys()))
+        league_id = options_ligues[nom_ligue]
+    except Exception as e:
+        st.warning(f"Impossible de charger la liste des ligues ({e}) — saisie manuelle de l'ID en secours.")
+        league_id = st.number_input("ID de la ligue", value=61)
+
+    # --- Sélection de plusieurs saisons ---
+    annee_courante = 2026
+    saisons_disponibles = list(range(annee_courante - 15, annee_courante + 1))
+    saisons = st.multiselect(
+        "Saison(s)", options=saisons_disponibles, default=[annee_courante - 1]
+    )
+
     if st.button("Tester la récupération des matchs"):
-        try:
-            fixtures = football_api.get_fixtures(league_id, season)
-            st.success(f"{len(fixtures)} matchs récupérés")
-            st.session_state["football_fixtures"] = fixtures
-        except Exception as e:
-            st.error(f"Échec de la connexion : {e}")
+        if not saisons:
+            st.warning("Sélectionne au moins une saison.")
+        else:
+            try:
+                fixtures = football_api.get_fixtures_multi_saisons(league_id, saisons)
+                st.success(f"{len(fixtures)} matchs récupérés sur {len(saisons)} saison(s)")
+                st.session_state["football_fixtures"] = fixtures
+            except Exception as e:
+                st.error(f"Échec de la connexion : {e}")
 
 with onglet_exploration:
     st.subheader("Ce que la donnée permet de calculer")
@@ -44,6 +66,12 @@ with onglet_exploration:
             [{"date": e.date, "équipes": " vs ".join(p.name for p in e.participants),
               "compétition": e.competition} for e in events]
         )
+
+        with st.expander("Voir toutes les données brutes renvoyées par l'API (tous les champs)"):
+            # aplatit le JSON imbriqué en un tableau avec une colonne par champ disponible
+            df_brut = pd.json_normalize(fixtures)
+            st.write(f"{df_brut.shape[1]} colonnes disponibles au total")
+            st.dataframe(df_brut)
 
 with onglet_sortie:
     st.subheader("Rating et probabilités (démonstration)")
