@@ -23,13 +23,15 @@ with onglet_ingestion:
             "[football]\napi_key = \"ta_cle\""
         )
 
-    # --- Sélection de la ligue via une liste déroulante plutôt qu'un ID numérique ---
+    # --- Sélection en 2 temps : pays puis ligue, pour éviter une liste trop longue ---
     try:
         leagues = football_api.get_leagues()
-        options_ligues = {
-            f"{l['league']['name']} ({l['country']['name']})": l["league"]["id"]
-            for l in leagues
-        }
+
+        pays_disponibles = sorted({l["country"]["name"] for l in leagues if l["country"]["name"]})
+        pays = st.selectbox("Pays", pays_disponibles, index=pays_disponibles.index("France") if "France" in pays_disponibles else 0)
+
+        leagues_du_pays = [l for l in leagues if l["country"]["name"] == pays]
+        options_ligues = {l["league"]["name"]: l["league"]["id"] for l in leagues_du_pays}
         nom_ligue = st.selectbox("Ligue", sorted(options_ligues.keys()))
         league_id = options_ligues[nom_ligue]
     except Exception as e:
