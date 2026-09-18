@@ -37,6 +37,7 @@ class Event:
     participants: list[Participant]  # 2 pour foot/tennis/MMA, n pour hippique
     competition: Optional[str] = None
     meta: dict = field(default_factory=dict)
+    brut: dict = field(default_factory=dict)  # réponse brute complète de la source, sans filtrage
 
 
 @dataclass
