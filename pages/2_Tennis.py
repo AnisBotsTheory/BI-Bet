@@ -1,4 +1,5 @@
 import streamlit as st
+import pandas as pd
 
 from sources import tennis_source
 from core.rating_engine import nouveau_rating, probabilite_victoire_duel
@@ -13,23 +14,33 @@ onglet_ingestion, onglet_exploration, onglet_sortie = st.tabs(
 with onglet_ingestion:
     st.subheader("Statut de connexion à la source")
     st.write("Source unique : **TennisMyLife (TML-Database)** — accès public, sans clé API")
-    annee = st.number_input("Année", value=2025, min_value=2000, max_value=2026)
-    if st.button("Tester le téléchargement de la saison"):
-        try:
-            df = tennis_source.get_saison(annee)
-            st.success(f"{len(df)} matchs récupérés")
-            st.session_state["tennis_df"] = df
-        except Exception as e:
-            st.error(f"Échec du téléchargement : {e}")
+
+    annee_courante = 2026
+    annees_disponibles = list(range(2000, annee_courante + 1))
+    annees = st.multiselect(
+        "Année(s)", options=annees_disponibles, default=[annee_courante - 1]
+    )
+
+    if st.button("Tester le téléchargement des saisons"):
+        if not annees:
+            st.warning("Sélectionne au moins une année.")
+        else:
+            try:
+                dfs = [tennis_source.get_saison(a) for a in annees]
+                df = pd.concat(dfs, ignore_index=True)
+                st.success(f"{len(df)} matchs récupérés sur {len(annees)} année(s)")
+                st.session_state["tennis_df"] = df
+            except Exception as e:
+                st.error(f"Échec du téléchargement : {e}")
 
 with onglet_exploration:
     st.subheader("Ce que la donnée permet de calculer")
     df = st.session_state.get("tennis_df")
     if df is None:
-        st.info("Télécharge d'abord une saison dans l'onglet Ingestion.")
+        st.info("Télécharge d'abord une ou plusieurs saisons dans l'onglet Ingestion.")
     else:
-        st.write("Aperçu des colonnes disponibles :")
-        st.dataframe(df.head(20))
+        st.write(f"{df.shape[1]} colonnes disponibles au total (toutes conservées, rien n'est filtré)")
+        st.dataframe(df)
         st.caption(
             "Features spécifiques exploitables ici : surface (dur/terre/gazon), "
             "round, niveau du tournoi (Grand Chelem, Masters, etc.)."
