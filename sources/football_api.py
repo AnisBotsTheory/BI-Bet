@@ -65,6 +65,49 @@ def get_odds(fixture_id: int) -> list[dict]:
     return resp.json().get("response", [])
 
 
+@st.cache_data(ttl=3600)
+def get_predictions(fixture_id: int) -> dict:
+    """
+    Récupère le pronostic natif d'API-Football pour un match (endpoint gratuit).
+    Calculé par 6 algorithmes internes, SANS utiliser les cotes des bookmakers -
+    donc un second avis réellement indépendant du marché et de notre propre
+    rating TrueSkill.
+    """
+    resp = requests.get(
+        f"{BASE_URL}/predictions",
+        headers=_headers(),
+        params={"fixture": fixture_id},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    reponse = resp.json().get("response", [])
+    return reponse[0] if reponse else {}
+
+
+def extraire_cotes_1x2(odds_bruts: list[dict]) -> dict | None:
+    """
+    Moyenne les cotes 1X2 ("Match Winner") tous bookmakers confondus.
+    Retourne {"home": x, "draw": y, "away": z} ou None si aucune cote dispo
+    (fréquent sur les divisions amateurs ou les matchs déjà anciens).
+    """
+    if not odds_bruts:
+        return None
+    cumul = {"Home": [], "Draw": [], "Away": []}
+    for bookmaker in odds_bruts[0].get("bookmakers", []):
+        for pari in bookmaker.get("bets", []):
+            if pari.get("name") == "Match Winner":
+                for valeur in pari.get("values", []):
+                    if valeur["value"] in cumul:
+                        cumul[valeur["value"]].append(float(valeur["odd"]))
+    if not cumul["Home"]:
+        return None
+    return {
+        "home": sum(cumul["Home"]) / len(cumul["Home"]),
+        "draw": sum(cumul["Draw"]) / len(cumul["Draw"]),
+        "away": sum(cumul["Away"]) / len(cumul["Away"]),
+    }
+
+
 def vers_schema_commun(fixture_brut: dict) -> Event:
     """Convertit un fixture brut API-Football vers le schéma Event commun."""
     teams = fixture_brut["teams"]
