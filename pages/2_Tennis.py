@@ -12,12 +12,11 @@ onglet_ingestion, onglet_exploration, onglet_sortie = st.tabs(
 
 with onglet_ingestion:
     st.subheader("Statut de connexion à la source")
-    st.write("Source unique : **tennis-data.co.uk** (historique + cotes, pas de temps réel)")
-    circuit = st.selectbox("Circuit", ["atp", "wta"])
+    st.write("Source unique : **TennisMyLife (TML-Database)** — accès public, sans clé API")
     annee = st.number_input("Année", value=2025, min_value=2000, max_value=2026)
     if st.button("Tester le téléchargement de la saison"):
         try:
-            df = tennis_source.get_saison(annee, circuit)
+            df = tennis_source.get_saison(annee)
             st.success(f"{len(df)} matchs récupérés")
             st.session_state["tennis_df"] = df
         except Exception as e:
@@ -32,8 +31,8 @@ with onglet_exploration:
         st.write("Aperçu des colonnes disponibles :")
         st.dataframe(df.head(20))
         st.caption(
-            "Features spécifiques exploitables ici : surface (terre/dur/gazon), "
-            "round, cotes de plusieurs bookmakers pour la probabilité de marché."
+            "Features spécifiques exploitables ici : surface (dur/terre/gazon), "
+            "round, niveau du tournoi (Grand Chelem, Masters, etc.)."
         )
 
 with onglet_sortie:
