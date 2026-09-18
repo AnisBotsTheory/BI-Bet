@@ -1,8 +1,8 @@
 """
-Source unique retenue pour le tennis : tennis-data.co.uk.
-Résultats + cotes dans le même fichier par saison - pas de réconciliation
-avec un second fournisseur (ex: TennisMyLife volontairement écarté ici,
-cf. discussion sur le risque de mismatch entre référentiels de noms).
+Source unique retenue pour le tennis : TennisMyLife (TML-Database) sur GitHub.
+Bascule depuis tennis-data.co.uk, devenu indisponible (timeout de connexion).
+Pas d'authentification nécessaire - fichiers CSV publics, un par année,
+couvrant ATP et WTA dans le même référentiel.
 """
 
 import io
@@ -13,39 +13,37 @@ from datetime import datetime
 
 from core.schema import Event, Participant, Sport
 
-BASE_URL = "http://www.tennis-data.co.uk"
+BASE_URL = "https://raw.githubusercontent.com/Tennismylife/TML-Database/master"
 
 
 @st.cache_data(ttl=86400)  # 1x/jour, cohérent avec le choix de données différées
-def get_saison(annee: int, circuit: str = "atp") -> pd.DataFrame:
-    """
-    Télécharge le fichier Excel d'une saison.
-    circuit: "atp" ou "wta" (le site distingue les deux avec un suffixe différent).
-    """
-    suffixe = "" if circuit == "atp" else "w"
-    url = f"{BASE_URL}/{annee}{suffixe}/{annee}.xlsx"
+def get_saison(annee: int) -> pd.DataFrame:
+    """Télécharge le fichier CSV d'une saison (ATP, toutes catégories confondues)."""
+    url = f"{BASE_URL}/{annee}.csv"
     resp = requests.get(url, timeout=20)
     resp.raise_for_status()
-    return pd.read_excel(io.BytesIO(resp.content))
+    return pd.read_csv(io.StringIO(resp.text))
 
 
 def vers_schema_commun(ligne: pd.Series) -> Event:
-    """Convertit une ligne du fichier tennis-data.co.uk vers le schéma Event commun."""
+    """Convertit une ligne TennisMyLife vers le schéma Event commun."""
+    nom_gagnant = f"{ligne.get('winner_name', '')}".strip()
+    nom_perdant = f"{ligne.get('loser_name', '')}".strip()
     participants = [
         Participant(
-            id=ligne["Winner"], name=ligne["Winner"], sport=Sport.TENNIS,
-            meta={"surface": ligne.get("Surface")},
+            id=str(ligne.get("winner_id", nom_gagnant)), name=nom_gagnant, sport=Sport.TENNIS,
+            meta={"surface": ligne.get("surface")},
         ),
         Participant(
-            id=ligne["Loser"], name=ligne["Loser"], sport=Sport.TENNIS,
-            meta={"surface": ligne.get("Surface")},
+            id=str(ligne.get("loser_id", nom_perdant)), name=nom_perdant, sport=Sport.TENNIS,
+            meta={"surface": ligne.get("surface")},
         ),
     ]
     return Event(
-        id=f"{ligne['Tournament']}_{ligne['Date']}_{ligne['Winner']}_{ligne['Loser']}",
+        id=f"{ligne.get('tourney_id')}_{ligne.get('match_num')}",
         sport=Sport.TENNIS,
-        date=pd.to_datetime(ligne["Date"]).to_pydatetime(),
+        date=pd.to_datetime(str(ligne.get("tourney_date")), format="%Y%m%d", errors="coerce"),
         participants=participants,
-        competition=ligne.get("Tournament"),
-        meta={"surface": ligne.get("Surface"), "round": ligne.get("Round")},
+        competition=ligne.get("tourney_name"),
+        meta={"surface": ligne.get("surface"), "round": ligne.get("round")},
     )
