@@ -37,6 +37,20 @@ with onglet_ingestion:
         except Exception as e:
             st.error(f"Échec de la connexion : {e}")
 
+    with st.expander("🔧 Mode diagnostic : voir la réponse brute d'un jour précis"):
+        st.caption(
+            "Vérifie si le champ arrivee_details (noms de chevaux, jockeys, cotes) "
+            "est bien présent pour une date donnée, ou si seules les infos "
+            "générales de la course sont disponibles."
+        )
+        jour_test = st.text_input("Date à tester (MM/DD/YYYY)", value="08/18/2026")
+        if st.button("Voir la réponse brute de ce jour"):
+            try:
+                brut = hippique_source.get_arrivees_debug(jour_test)
+                st.json(brut)
+            except Exception as e:
+                st.error(f"Échec : {e}")
+
 with onglet_exploration:
     st.subheader("Ce que la donnée permet de calculer")
     courses = st.session_state.get("hippique_courses", [])
