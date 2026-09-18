@@ -32,8 +32,29 @@ with onglet_ingestion:
             try:
                 st.session_state["mma_resultats_a"] = mma_source.rechercher_combattant(nom_a)
                 st.session_state["mma_resultats_b"] = mma_source.rechercher_combattant(nom_b)
+                if not st.session_state["mma_resultats_a"] or not st.session_state["mma_resultats_b"]:
+                    st.warning(
+                        "Aucun résultat pour au moins un des deux noms. Utilise le mode "
+                        "diagnostic ci-dessous pour voir ce que l'API renvoie réellement."
+                    )
             except Exception as e:
                 st.error(f"Échec de la connexion : {e}")
+
+    with st.expander("🔧 Mode diagnostic : voir pourquoi la recherche ne renvoie rien"):
+        st.caption(
+            "Le nom exact du paramètre de recherche n'a pas pu être confirmé à l'avance "
+            "dans la documentation publique. Ce bouton teste plusieurs noms possibles "
+            "(search, name, lastname, q) sur le nom du Combattant 1 et montre la réponse "
+            "brute de chacun, pour identifier lequel fonctionne réellement."
+        )
+        if st.button("Lancer le diagnostic sur Combattant 1"):
+            if not nom_a:
+                st.warning("Renseigne au moins le nom du Combattant 1.")
+            else:
+                essais = mma_source.rechercher_combattant_debug(nom_a)
+                for nom_param, resultat in essais.items():
+                    st.write(f"**Paramètre testé : `{nom_param}`**")
+                    st.json(resultat)
 
     resultats_a = st.session_state.get("mma_resultats_a", [])
     resultats_b = st.session_state.get("mma_resultats_b", [])
