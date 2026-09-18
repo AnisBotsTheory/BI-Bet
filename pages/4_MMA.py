@@ -5,7 +5,6 @@ from core.rating_engine import nouveau_rating, probabilite_victoire_duel
 
 st.set_page_config(page_title="MMA", page_icon="🥊", layout="wide")
 st.title("🥊 MMA")
-st.info("Onglet en phase d'exploration — pas de cotes gratuites en temps réel disponibles.")
 
 onglet_ingestion, onglet_exploration, onglet_sortie = st.tabs(
     ["1. Ingestion", "2. Exploration", "3. Sortie exploitable"]
@@ -13,25 +12,35 @@ onglet_ingestion, onglet_exploration, onglet_sortie = st.tabs(
 
 with onglet_ingestion:
     st.subheader("Statut de connexion à la source")
-    st.write("Source unique : **Ultimate UFC Dataset** (Kaggle, mdabbert) — dataset statique")
-    if st.button("Charger le dataset local"):
+    st.write("Source unique : **API-Sports MMA** (même compte que le football)")
+    if "football" in st.secrets and st.secrets["football"].get("api_key"):
+        st.success("Clé API détectée (partagée avec le football)")
+    else:
+        st.error("Aucune clé API trouvée dans .streamlit/secrets.toml")
+
+    date = st.date_input("Date à interroger")
+    if st.button("Tester la récupération des combats"):
         try:
-            df = mma_source.charger_dataset()
-            st.success(f"{len(df)} combats chargés")
-            st.session_state["mma_df"] = df
-        except FileNotFoundError as e:
-            st.error(str(e))
+            fights = mma_source.get_fights(date.isoformat())
+            st.success(f"{len(fights)} combat(s) récupéré(s)")
+            st.session_state["mma_fights"] = fights
+        except Exception as e:
+            st.error(f"Échec de la connexion : {e}")
 
 with onglet_exploration:
     st.subheader("Ce que la donnée permet de calculer")
-    df = st.session_state.get("mma_df")
-    if df is None:
-        st.info("Charge d'abord le dataset dans l'onglet Ingestion.")
+    fights = st.session_state.get("mma_fights", [])
+    if not fights:
+        st.info("Récupère d'abord des combats dans l'onglet Ingestion.")
     else:
-        st.dataframe(df.head(20))
+        events = [mma_source.vers_schema_commun(f) for f in fights]
+        st.dataframe(
+            [{"date": e.date, "combattants": " vs ".join(p.name for p in e.participants),
+              "catégorie": e.competition} for e in events]
+        )
         st.caption(
             "Features spécifiques exploitables ici : catégorie de poids, "
-            "méthode de victoire (finish), cotes historiques incluses au dataset."
+            "organisation, cotes des bookmakers référencés par l'API."
         )
 
 with onglet_sortie:
